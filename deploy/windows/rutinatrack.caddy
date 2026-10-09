@@ -1,0 +1,11 @@
+# Agregar DENTRO del bloque gym.example del Caddy existente en Ubuntu.
+# Este fragmento no reemplaza el Caddyfile actual.
+# Backend en la misma VM: 127.0.0.1:3132.
+# Si se ejecuta en Windows, cambiar por su IP LAN y permitir solo la IP de Ubuntu
+# en el firewall del puerto 3132; no reenviar ese puerto desde Internet.
+redir /rutinatrack /rutinatrack/ 308
+handle_path /rutinatrack/* {
+    reverse_proxy 127.0.0.1:3132
+}
+# La configuración existente de la otra aplicación debe quedar dentro de un handle { ... }
+# sin matcher, para que no intercepte también las peticiones de RutinaTrack.

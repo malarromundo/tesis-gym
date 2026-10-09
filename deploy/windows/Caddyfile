@@ -1,0 +1,11 @@
+{
+    admin off
+}
+
+http://127.0.0.1:8088 {
+    encode zstd gzip
+    redir /rutinatrack /rutinatrack/ 308
+    handle_path /rutinatrack/* {
+        reverse_proxy 127.0.0.1:3132
+    }
+}
