@@ -1,8 +1,8 @@
 # RutinaTrack
 
-Actualización de acceso remoto: destino elegido `https://incomexar.sytes.net/rutinatrack`.
-Publicado y verificado en Ubuntu 192.168.1.55; Incomex conserva sus rutas.
-Ver `deploy/windows/README.md` para el estado comprobado y el fragmento de proxy.
+El servidor se configura con un dominio HTTPS propio. Los ejemplos usan gym.example.
+
+Guía de exposición: [DEFENSA.md](DEFENSA.md).
 
 Aplicación React + Vite y Express, con servidor integrado en Windows y clientes móviles Capacitor. CSS propio, fuentes incluidas en el build y ningún recurso de imágenes de ejercicios descargado.
 
