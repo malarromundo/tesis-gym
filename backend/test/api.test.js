@@ -1,0 +1,121 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createApp} from '../src/app.js';
+import {createUser} from '../src/common.js';
+import {openDatabase} from '../src/db.js';
+
+test('API real: autenticación, aislamiento, entrenamiento, reportes y persistencia',async t=>{
+  const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'rutinatrack-test-'));
+  const {app,db}=await createApp({dataDir});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));db.close();fs.rmSync(dataDir,{recursive:true,force:true});});
+  async function request(method,url,body,token,expected=200){
+    const response=await fetch(base+url,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});
+    const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}
+    assert.equal(response.status,expected,`${method} ${url}: ${text}`);return data;
+  }
+  const pass='PruebaSegura123!';
+  createUser(db,{name:'Admin',email:'admin@test.local',password:pass},'ADMIN');
+  const login=async email=>(await request('POST','/api/auth/login',{email,password:pass})).token;
+  const admin=await login('admin@test.local');
+  const trainer=await request('POST','/api/users',{name:'Entrenador',email:'trainer@test.local',password:pass,role:'TRAINER'},admin,201);
+  const otherTrainer=await request('POST','/api/users',{name:'Otro entrenador',email:'other@test.local',password:pass,role:'TRAINER'},admin,201);
+  const tr=await login(trainer.email),other=await login(otherTrainer.email);
+  const athlete=await request('POST','/api/auth/register',{name:'Atleta',email:'athlete@test.local',password:pass},undefined,201);
+  const athlete2=await request('POST','/api/users',{name:'Atleta 2',email:'athlete2@test.local',password:pass,role:'ATHLETE',trainer_id:trainer.id},admin,201);
+  const ath=await login(athlete.email),ath2=await login(athlete2.email);
+  await request('PATCH',`/api/users/${athlete.id}`,{trainer_id:trainer.id},admin);
+  await t.test('registro público y permisos del catálogo',async()=>{
+    await request('POST','/api/auth/register',{name:'Intruso',email:'bad@test.local',password:pass,role:'ADMIN'},undefined,400);
+    await request('POST','/api/auth/register',{name:'Intruso',email:'bad@test.local',password:pass,trainer_id:trainer.id},undefined,400);
+    await request('POST','/api/auth/register',{name:'Duplicado',email:athlete.email.toUpperCase(),password:pass},undefined,409);
+    await request('GET','/api/users',undefined,ath,403);
+    await request('GET','/api/auth/me',undefined,'token-invalido',401);
+    await request('GET','/api/exercises',undefined,undefined,401);
+    await request('POST','/api/exercises',{name:'X',muscle_group:'X',description:'X'},ath,403);
+  });
+  const exercise=await request('POST','/api/exercises',{name:'Sentadilla de prueba',muscle_group:'Piernas',description:'Coloque los pies al ancho de hombros. Flexione caderas y rodillas manteniendo el tronco estable y vuelva a ponerse de pie.'},tr,201);
+  const routineBody={name:'Fuerza A',assigned_to_id:athlete.id,exercises:[{exercise_id:exercise.id,target_sets:3,target_reps:10,target_weight:40}]};
+  const routine=await request('POST','/api/routines',routineBody,tr,201);
+  await t.test('aislamiento por entrenador y propietario; tope de repeticiones',async()=>{
+    await request('GET',`/api/users/${athlete.id}`,undefined,other,404);
+    await request('GET',`/api/routines/${routine.id}`,undefined,other,404);
+    await request('GET',`/api/routines/${routine.id}`,undefined,ath2,404);
+    await request('POST','/api/routines',routineBody,other,404);
+    await request('POST','/api/routines',{...routineBody,exercises:[{...routineBody.exercises[0],target_reps:21}]},tr,400);
+    await request('POST','/api/routines',{...routineBody,exercises:[{...routineBody.exercises[0],target_reps:1.5}]},tr,400);
+    const own=await request('POST','/api/routines',{...routineBody,assigned_to_id:athlete2.id},ath,201);
+    assert.equal(own.assigned_to_id,athlete.id);
+    await request('POST','/api/sessions',{routine_id:routine.id},ath2,404);
+    assert.deepEqual(await request('GET','/api/users/athletes',undefined,other),[]);
+  });
+  const session=await request('POST','/api/sessions',{routine_id:routine.id},ath,201);
+  const setBody={exercise_id:exercise.id,routine_exercise_id:routine.exercises[0].id,set_number:1,reps:10,weight:40,rpe:7};
+  await t.test('series, consistencia e inmutabilidad',async()=>{
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,reps:21},ath,400);
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,reps:0},ath,400);
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,weight:-1},ath,400);
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,rpe:11},ath,400);
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,routine_exercise_id:9999},ath,400);
+    await request('POST',`/api/sessions/${session.id}/sets`,setBody,ath2,404);
+    await request('POST',`/api/sessions/${session.id}/sets`,setBody,tr,403);
+    await request('POST',`/api/sessions/${session.id}/sets`,setBody,ath,201);
+    await request('POST',`/api/sessions/${session.id}/sets`,{...setBody,set_number:2,reps:8,weight:45},ath,201);
+    await request('PATCH',`/api/routines/${routine.id}`,{name:'No debe cambiar'},tr,409);
+    const before=await request('GET','/api/reports/progress',undefined,ath);assert.equal(before.completed_sessions,0);
+    await request('POST',`/api/sessions/${session.id}/complete`,{},ath);
+    await request('POST',`/api/sessions/${session.id}/sets`,setBody,ath,409);
+    const history=await request('GET','/api/sessions?status=COMPLETED',undefined,ath);assert.equal(history[0].id,session.id);
+    const progress=await request('GET',`/api/reports/progress?exercise_id=${exercise.id}`,undefined,ath);
+    assert.equal(progress.completed_sessions,1);assert.equal(progress.weekly_volume.reduce((sum,w)=>sum+w.volume_kg_reps,0),760);assert.equal(progress.max_weight[0].max_weight_kg,45);
+    const free=await request('POST','/api/sessions',{},ath,201);
+    await request('POST',`/api/sessions/${free.id}/sets`,setBody,ath,400);
+    await request('POST',`/api/sessions/${free.id}/sets`,{...setBody,routine_exercise_id:null,reps:20},ath,201);
+  });
+  await t.test('peso corporal, reportes y CSV con permisos',async()=>{
+    const date=new Date().toISOString().slice(0,10);
+    await request('PUT',`/api/bodyweight/${date}`,{weight_kg:78.5},ath);
+    await request('PUT',`/api/bodyweight/${date}`,{weight_kg:78.2},ath);
+    assert.equal((await request('GET','/api/bodyweight',undefined,ath)).length,1);
+    await request('PUT','/api/bodyweight/2026-02-30',{weight_kg:78},ath,400);
+    await request('GET',`/api/reports/progress?athlete_id=${athlete.id}`,undefined,other,404);
+    const report=await request('GET',`/api/reports/progress?athlete_id=${athlete.id}`,undefined,tr);assert.equal(report.body_weight[0].weight_kg,78.2);
+    const summary=await request('GET','/api/reports/trainer',undefined,tr);assert.equal(summary.athletes.length,2);
+    await request('GET','/api/reports/admin',undefined,ath,403);
+    const global=await request('GET','/api/reports/admin',undefined,admin);assert.equal(global.sessions_per_day.reduce((sum,d)=>sum+d.sessions,0),1);
+    const csv=await request('GET','/api/reports/export?type=progress',undefined,ath);assert.match(csv,/volume_kg_reps/);
+    await request('GET','/api/reports/export?type=admin',undefined,tr,403);
+    await request('GET',`/api/reports/export?type=progress&athlete_id=${athlete.id}`,undefined,other,404);
+  });
+  await t.test('QR público mínimo, rotación y desactivación',async()=>{
+    const shared=await request('GET',`/public/share/${athlete.share_token}`);assert.equal(shared.name,athlete.name);assert.equal(shared.routines.length,2);
+    assert.equal(shared.email,undefined);assert.equal(shared.id,undefined);assert.equal(shared.routines[0].exercises[0].notes,undefined);
+    await request('GET',`/public/share/${athlete.id}`,undefined,undefined,404);
+    const rotated=await request('POST','/api/users/me/share-token/rotate',{},ath);
+    await request('GET',`/public/share/${athlete.share_token}`,undefined,undefined,404);
+    await request('GET',`/public/share/${rotated.share_token}`);
+    await request('PATCH',`/api/users/${athlete.id}`,{active:false},admin);
+    await request('GET','/api/auth/me',undefined,ath,401);
+    await request('GET',`/public/share/${rotated.share_token}`,undefined,undefined,404);
+    await request('PATCH',`/api/users/${athlete.id}`,{active:true,trainer_id:otherTrainer.id},admin);
+    await request('GET',`/api/sessions/${session.id}`,undefined,tr,404);
+    await request('GET',`/api/sessions/${session.id}`,undefined,other);
+  });
+  await t.test('persistencia SQL, rollback y restricciones de base',async()=>{
+    const persisted=await openDatabase(dataDir);
+    assert.equal(persisted.one('SELECT count(*) AS n FROM users').n,5);
+    assert.equal(persisted.one('SELECT count(*) AS n FROM session_sets').n,3);
+    persisted.close();
+    const count=db.one('SELECT count(*) AS n FROM exercises').n;
+    assert.throws(()=>db.transaction(()=>{db.run("INSERT INTO exercises(name,muscle_group,description) VALUES('rollback','X','X')");throw new Error('rollback');}));
+    assert.equal(db.one('SELECT count(*) AS n FROM exercises').n,count);
+    assert.throws(()=>db.transaction(()=>db.run('INSERT INTO session_sets(session_id,exercise_id,set_number,reps,weight) VALUES(?,?,?,?,?)',[session.id,exercise.id,3,21,40])),/CHECK/);
+    assert.throws(()=>db.transaction(()=>db.run('DELETE FROM exercises WHERE id=?',[exercise.id])),/FOREIGN KEY/);
+    await request('DELETE',`/api/exercises/${exercise.id}`,undefined,admin,409);
+    const persistedAgain=await openDatabase(dataDir);assert.equal(persistedAgain.one('SELECT count(*) AS n FROM exercises').n,count);persistedAgain.close();
+  });
+});
