@@ -1,0 +1,37 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      PUBLIC_ORIGIN: https://${DOMAIN:?Defina DOMAIN en .env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rutinatrack.local}
+    volumes:
+      - rutinatrack-data:/data
+    networks:
+      - app
+  https:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Defina DOMAIN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+networks:
+  app:
+volumes:
+  rutinatrack-data:
+  caddy-data:
+  caddy-config:

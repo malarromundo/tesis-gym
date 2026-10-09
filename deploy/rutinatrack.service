@@ -1,0 +1,29 @@
+[Unit]
+Description=RutinaTrack gym training API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rutinatrack
+Group=rutinatrack
+WorkingDirectory=/opt/rutinatrack/backend
+ExecStart=/usr/bin/node scripts/bootstrap.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3132
+Environment=DATA_DIR=/var/lib/rutinatrack
+Environment=PUBLIC_DIR=/opt/rutinatrack/frontend/dist-server
+Environment=PUBLIC_ORIGIN=https://gym.example/rutinatrack
+StateDirectory=rutinatrack
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
