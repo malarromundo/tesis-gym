@@ -1,0 +1,61 @@
+{
+  "name": "rutinatrack",
+  "version": "1.0.0",
+  "description": "Gestión de entrenamientos de gimnasio",
+  "author": "RutinaTrack",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "node scripts/build.mjs",
+    "desktop": "electron .",
+    "dist:win": "node scripts/dist-win.mjs",
+    "mobile:build": "npm --prefix frontend run build:mobile",
+    "mobile:android": "npm run mobile:build && node scripts/cap.cjs sync android",
+    "mobile:ios": "npm run mobile:build && node scripts/cap.cjs sync ios",
+    "open:android": "node scripts/cap.cjs open android",
+    "open:ios": "node scripts/cap.cjs open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "bcryptjs": "^3.0.2",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "sql.js": "^1.14.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.rutinatrack.app",
+    "productName": "RutinaTrack",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "backend/src/**/*",
+      "backend/scripts/catalog.js",
+      "backend/public/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.wasm"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "artifactName": "RutinaTrack-Setup-${version}.${ext}"
+  }
+}
